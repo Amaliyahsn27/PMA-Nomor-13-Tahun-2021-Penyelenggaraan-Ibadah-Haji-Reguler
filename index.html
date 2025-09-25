@@ -3,30 +3,31 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>Viewer eBook Ramah User</title>
+  <title>Viewer eBook Aman</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     body {
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      overflow-y: scroll;
+      overflow-x: hidden;
     }
 
     #pdf-container {
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      padding: 12px;
     }
 
     canvas {
-      margin-bottom: 20px;
+      margin-bottom: 16px;
       border: 1px solid #ccc;
       background-color: white;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
       max-width: 100%;
       height: auto;
+      border-radius: 6px;
     }
 
     @media print {
@@ -41,60 +42,75 @@
   <div id="pdf-container"></div>
 
   <script>
-    const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf"; // file harus ada 1 folder
-
+    const url = 'PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf';
     pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    const container = document.getElementById("pdf-container");
+    const container = document.getElementById('pdf-container');
+    let pdfDoc = null;
+    let currentPage = 1;
+    const renderQueue = new Set(); // biar tidak render dobel
 
-    pdfjsLib.getDocument(url).promise.then(pdf => {
-      const totalPages = pdf.numPages;
+    // fungsi render halaman
+    function renderPage(num) {
+      if (renderQueue.has(num)) return;
+      renderQueue.add(num);
 
-      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-        const canvas = document.createElement("canvas");
-        canvas.dataset.pageNumber = pageNum;
-        canvas.style.minHeight = "400px"; // placeholder biar layout stabil
+      pdfDoc.getPage(num).then(page => {
+        const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
+        const unscaledViewport = page.getViewport({ scale: 1 });
+        const scale = desiredWidth / unscaledViewport.width;
+        const viewport = page.getViewport({ scale: scale * window.devicePixelRatio });
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = `${viewport.width / window.devicePixelRatio}px`;
+        canvas.style.height = `${viewport.height / window.devicePixelRatio}px`;
+        canvas.setAttribute("data-page", num);
+
         container.appendChild(canvas);
 
-        // observer biar render hanya saat kelihatan
-        const observer = new IntersectionObserver(entries => {
-          entries.forEach(entry => {
-            if (entry.isIntersecting && !canvas.dataset.rendered) {
-              pdf.getPage(pageNum).then(page => {
-                const desiredWidth = Math.min(window.innerWidth * 0.9, 800);
-                const viewport = page.getViewport({ scale: 1 });
-                const scale = desiredWidth / viewport.width;
+        page.render({
+          canvasContext: context,
+          viewport: viewport
+        });
+      });
+    }
 
-                const scaledViewport = page.getViewport({ scale: scale * window.devicePixelRatio });
-                const context = canvas.getContext("2d");
-                canvas.width = scaledViewport.width;
-                canvas.height = scaledViewport.height;
-                canvas.style.width = `${scaledViewport.width / window.devicePixelRatio}px`;
-                canvas.style.height = `${scaledViewport.height / window.devicePixelRatio}px`;
+    // Lazy load halaman saat scroll
+    function handleScroll() {
+      const canvases = document.querySelectorAll("canvas");
+      canvases.forEach(c => {
+        const rect = c.getBoundingClientRect();
+        if (rect.top < window.innerHeight + 200 && rect.bottom > -200) {
+          const pageNum = parseInt(c.getAttribute("data-page"));
+          if (!renderQueue.has(pageNum)) {
+            renderPage(pageNum);
+          }
+        }
+      });
 
-                page.render({
-                  canvasContext: context,
-                  viewport: scaledViewport
-                });
-
-                canvas.dataset.rendered = true; // tandai sudah dirender
-              });
-              observer.unobserve(canvas);
-            }
-          });
-        }, { rootMargin: "100px" });
-
-        observer.observe(canvas);
+      // load halaman berikutnya biar smooth
+      if (currentPage < pdfDoc.numPages) {
+        const lastCanvas = container.lastChild;
+        if (lastCanvas && lastCanvas.getBoundingClientRect().top < window.innerHeight + 300) {
+          currentPage++;
+          renderPage(currentPage);
+        }
       }
-    });
+    }
 
-    // blok tombol save, print, inspect
+    pdfjsLib.getDocument(url).promise.then(pdf => {
+      pdfDoc = pdf;
+      renderPage(currentPage); // render pertama
+      window.addEventListener("scroll", handleScroll);
+    }).catch(err => console.error("Gagal memuat PDF:", err));
+
+    // Blokir keyboard shortcuts (save, print, inspect)
     document.addEventListener("keydown", function (e) {
-      if (
-        (e.ctrlKey && ["s", "p", "u"].includes(e.key.toLowerCase())) ||
-        e.key === "F12"
-      ) {
+      if ((e.ctrlKey && ['s', 'p', 'u'].includes(e.key.toLowerCase())) || e.key === "F12") {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
       }
