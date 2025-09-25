@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Viewer eBook Aman</title>
+  <title>Viewer eBook Aman Mobile</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
@@ -10,7 +10,6 @@
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      overflow-y: scroll;
     }
     #pdf-container {
       display: flex;
@@ -27,62 +26,90 @@
       height: auto;
       border-radius: 6px;
     }
-    @media print {
-      body { display: none !important; }
+    .loading {
+      text-align: center;
+      color: #666;
+      margin: 20px;
+      font-size: 14px;
     }
   </style>
 </head>
 <body oncontextmenu="return false">
+  <h3 style="text-align:center">📖 Buku Tuntunan Haji</h3>
   <div id="pdf-container"></div>
+  <div id="loading" class="loading">Memuat halaman...</div>
 
   <script>
     const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
 
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
     const container = document.getElementById("pdf-container");
+    const loadingDiv = document.getElementById("loading");
 
     let pdfDoc = null;
+    let currentPage = 1;
+    const batchSize = 2; // muat 2 halaman per scroll agar ringan
 
-    // Render halaman satu per satu
-    function renderPage(num) {
-      pdfDoc.getPage(num).then(page => {
-        const viewport = page.getViewport({ scale: 1 });
+    function renderPage(pageNum) {
+      return pdfDoc.getPage(pageNum).then(page => {
+        const baseViewport = page.getViewport({ scale: 1 });
+
+        // paksa semua halaman ikut lebar layar
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-        const scale = desiredWidth / viewport.width;
-        const scaledViewport = page.getViewport({ scale });
+        const scale = desiredWidth / baseViewport.width;
+        const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
 
-        canvas.width = scaledViewport.width;
-        canvas.height = scaledViewport.height;
-        canvas.style.width = scaledViewport.width + "px";
-        canvas.style.height = scaledViewport.height + "px";
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = desiredWidth + "px";
+        canvas.style.height = (viewport.height) + "px";
 
         container.appendChild(canvas);
 
-        page.render({
-          canvasContext: ctx,
-          viewport: scaledViewport
-        }).promise.then(() => {
-          // Render halaman berikutnya setelah selesai
-          if (num < pdfDoc.numPages) {
-            renderPage(num + 1);
-          }
-        });
+        return page.render({ canvasContext: ctx, viewport: viewport }).promise;
       });
+    }
+
+    async function renderBatch() {
+      if (!pdfDoc) return;
+      loadingDiv.style.display = "block";
+
+      let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
+
+      for (let i = currentPage; i <= endPage; i++) {
+        await renderPage(i);
+      }
+
+      currentPage = endPage + 1;
+
+      if (currentPage > pdfDoc.numPages) {
+        loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
+      } else {
+        loadingDiv.textContent = "⬇️ Scroll ke bawah untuk lanjut...";
+      }
     }
 
     pdfjsLib.getDocument(url).promise.then(pdf => {
       pdfDoc = pdf;
-      renderPage(1); // mulai dari halaman pertama
-    }).catch(err => {
-      console.error("Gagal load PDF:", err);
+      renderBatch();
     });
 
-    // Blokir shortcut
-    document.addEventListener("keydown", function(e) {
+    // infinite scroll
+    window.addEventListener("scroll", () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+        if (currentPage <= pdfDoc.numPages) {
+          renderBatch();
+        }
+      }
+    });
+
+    // blokir shortcut
+    document.addEventListener("keydown", e => {
       if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
