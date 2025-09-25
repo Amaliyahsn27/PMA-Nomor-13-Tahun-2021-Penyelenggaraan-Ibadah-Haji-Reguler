@@ -55,9 +55,13 @@
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
 
-        // paksa semua halaman ikut lebar layar
+        // lebar layar maksimal 800px
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-        const scale = desiredWidth / baseViewport.width;
+
+        // tambah faktor kualitas (agar tidak blur)
+        const qualityFactor = window.devicePixelRatio || 2;
+
+        const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
@@ -66,7 +70,7 @@
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.style.width = desiredWidth + "px";
-        canvas.style.height = (viewport.height) + "px";
+        canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
 
@@ -117,4 +121,3 @@
   </script>
 </body>
 </html>
-
