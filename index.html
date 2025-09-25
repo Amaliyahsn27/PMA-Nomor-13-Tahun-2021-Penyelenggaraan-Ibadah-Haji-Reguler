@@ -3,15 +3,14 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Viewer eBook</title>
+  <title>Viewer eBook Ramah User</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     body {
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      overflow-x: hidden; /* cegah geser horizontal */
+      overflow-y: scroll;
     }
 
     #pdf-container {
@@ -39,58 +38,65 @@
 </head>
 
 <body oncontextmenu="return false">
-  <h2 style="text-align:center;">📖 Viewer eBook</h2>
   <div id="pdf-container"></div>
 
   <script>
-    const url = 'PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf'; // nama file PDF
+    const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf"; // file harus ada 1 folder
 
     pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-    const container = document.getElementById('pdf-container');
+    const container = document.getElementById("pdf-container");
 
     pdfjsLib.getDocument(url).promise.then(pdf => {
       const totalPages = pdf.numPages;
 
-      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
-        pdf.getPage(pageNumber).then(page => {
-          const unscaledViewport = page.getViewport({ scale: 1 });
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const canvas = document.createElement("canvas");
+        canvas.dataset.pageNumber = pageNum;
+        canvas.style.minHeight = "400px"; // placeholder biar layout stabil
+        container.appendChild(canvas);
 
-          // max 800px, atau 90% dari layar
-          const desiredWidth = Math.min(window.innerWidth * 0.9, 800);
-          const scale = desiredWidth / unscaledViewport.width;
+        // observer biar render hanya saat kelihatan
+        const observer = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting && !canvas.dataset.rendered) {
+              pdf.getPage(pageNum).then(page => {
+                const desiredWidth = Math.min(window.innerWidth * 0.9, 800);
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = desiredWidth / viewport.width;
 
-          // gunakan pixel ratio supaya kualitas tetap tajam
-          const viewport = page.getViewport({ scale: scale * window.devicePixelRatio });
+                const scaledViewport = page.getViewport({ scale: scale * window.devicePixelRatio });
+                const context = canvas.getContext("2d");
+                canvas.width = scaledViewport.width;
+                canvas.height = scaledViewport.height;
+                canvas.style.width = `${scaledViewport.width / window.devicePixelRatio}px`;
+                canvas.style.height = `${scaledViewport.height / window.devicePixelRatio}px`;
 
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
+                page.render({
+                  canvasContext: context,
+                  viewport: scaledViewport
+                });
 
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-
-          // ukuran tampilan canvas di layar (supaya tidak terlalu besar di HP)
-          canvas.style.width = `${viewport.width / window.devicePixelRatio}px`;
-          canvas.style.height = `${viewport.height / window.devicePixelRatio}px`;
-
-          container.appendChild(canvas);
-
-          page.render({
-            canvasContext: context,
-            viewport: viewport
+                canvas.dataset.rendered = true; // tandai sudah dirender
+              });
+              observer.unobserve(canvas);
+            }
           });
-        });
+        }, { rootMargin: "100px" });
+
+        observer.observe(canvas);
       }
-    }).catch(error => {
-      console.error('Gagal memuat PDF:', error);
     });
 
-    // blokir tombol save/print/devtools
-    document.addEventListener('keydown', function (e) {
-      if ((e.ctrlKey && ['s', 'p', 'u'].includes(e.key.toLowerCase())) || e.key === 'F12') {
+    // blok tombol save, print, inspect
+    document.addEventListener("keydown", function (e) {
+      if (
+        (e.ctrlKey && ["s", "p", "u"].includes(e.key.toLowerCase())) ||
+        e.key === "F12"
+      ) {
         e.preventDefault();
-        alert('Aksi ini tidak diizinkan.');
+        alert("Aksi ini tidak diizinkan.");
       }
     });
   </script>
