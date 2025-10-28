@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Viewer eBook Aman</title>
+  <title>Viewer eBook</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
@@ -10,8 +10,6 @@
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      overflow-x: hidden;
-      position: relative;
     }
     #pdf-container {
       display: flex;
@@ -34,45 +32,9 @@
       margin: 20px;
       font-size: 14px;
     }
-    /* watermark bergerak */
-    .watermark {
-      position: fixed;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      z-index: 1000;
-      width: 100%;
-      height: 100%;
-      color: rgba(0,0,0,0.1);
-      font-size: 24px;
-      font-weight: bold;
-      user-select: none;
-      animation: move 10s linear infinite alternate;
-    }
-    @keyframes move {
-      from { transform: translate(0, 0); }
-      to { transform: translate(50px, 50px); }
-    }
-    /* overlay video anti-screenshot */
-    #antiVideo {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      z-index: 9999;
-      opacity: 0.01; /* nyaris tak terlihat */
-      pointer-events: none;
-    }
   </style>
 </head>
 <body oncontextmenu="return false">
-  <div class="watermark" id="watermark">DOKUMEN RAHASIA - DILARANG SCREENSHOT</div>
-  <video id="antiVideo" autoplay loop muted playsinline>
-    <source src="https://cdn.jsdelivr.net/gh/napthedev/assets/black.webm" type="video/webm">
-  </video>
-
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
 
@@ -87,13 +49,18 @@
 
     let pdfDoc = null;
     let currentPage = 1;
-    const batchSize = 2;
+    const batchSize = 2; // muat 2 halaman per scroll agar ringan
 
     function renderPage(pageNum) {
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
+
+        // lebar layar maksimal 800px
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
+
+        // tambah faktor kualitas (agar tidak blur)
         const qualityFactor = window.devicePixelRatio || 2;
+
         const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
 
@@ -106,6 +73,7 @@
         canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
+
         return page.render({ canvasContext: ctx, viewport: viewport }).promise;
       });
     }
@@ -115,15 +83,18 @@
       loadingDiv.style.display = "block";
 
       let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
+
       for (let i = currentPage; i <= endPage; i++) {
         await renderPage(i);
       }
 
       currentPage = endPage + 1;
-      loadingDiv.textContent =
-        currentPage > pdfDoc.numPages
-          ? "✅ Semua halaman selesai dimuat."
-          : "⬇️ Scroll ke bawah untuk lanjut...";
+
+      if (currentPage > pdfDoc.numPages) {
+        loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
+      } else {
+        loadingDiv.textContent = "⬇️ Scroll ke bawah untuk lanjut...";
+      }
     }
 
     pdfjsLib.getDocument(url).promise.then(pdf => {
@@ -131,6 +102,7 @@
       renderBatch();
     });
 
+    // infinite scroll
     window.addEventListener("scroll", () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
         if (currentPage <= pdfDoc.numPages) {
@@ -141,7 +113,7 @@
 
     // blokir shortcut
     document.addEventListener("keydown", e => {
-      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12" || e.key === "PrintScreen") {
+      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
       }
@@ -149,3 +121,4 @@
   </script>
 </body>
 </html>
+
