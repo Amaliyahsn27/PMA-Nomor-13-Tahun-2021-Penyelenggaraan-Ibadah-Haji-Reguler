@@ -123,23 +123,30 @@
       }
     });
 
-    // Blokir shortcut
-    document.addEventListener("keydown", e => {
-      const key = e.key.toLowerCase();
-      if (
-        (e.ctrlKey && ["s", "p", "u", "c", "x", "a"].includes(key)) ||
-        ["f12"].includes(key)
-      ) {
-        e.preventDefault();
-        alert("Aksi ini tidak diizinkan.");
-      }
+   // Blokir shortcut umum (save, copy, inspect, print, screenshot)
+document.addEventListener("keydown", e => {
+  const key = e.key.toLowerCase();
 
-      // Deteksi Print Screen
-      if (key === "printscreen") {
-        e.preventDefault();
-        triggerBlackout();
-      }
-    });
+  // Blokir kombinasi umum
+  if (
+    (e.ctrlKey && ["s", "p", "u", "c", "x", "a"].includes(key)) ||
+    ["f12"].includes(key)
+  ) {
+    e.preventDefault();
+    alert("Aksi ini tidak diizinkan.");
+  }
+
+  // Deteksi berbagai kombinasi screenshot
+  if (
+    key === "printscreen" ||
+    (e.ctrlKey && e.shiftKey && ["s", "3", "4"].includes(key)) ||
+    (e.metaKey && e.shiftKey && ["3", "4", "s"].includes(key)) ||
+    (e.altKey && key === "printscreen")
+  ) {
+    e.preventDefault();
+    triggerBlackout();
+  }
+});
 
     // Deteksi devtools (console dibuka)
     let devtoolsOpen = false;
@@ -172,3 +179,4 @@
   </script>
 </body>
 </html>
+
