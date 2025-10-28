@@ -10,10 +10,6 @@
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      user-select: none;
-      -webkit-user-select: none;
-      -ms-user-select: none;
-      -moz-user-select: none;
       overflow-x: hidden;
     }
     #pdf-container {
@@ -37,26 +33,42 @@
       margin: 20px;
       font-size: 14px;
     }
-    /* Overlay hitam */
-    #black-overlay {
+    /* Overlay hitam penuh */
+    #blackout {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
+      inset: 0;
       background: black;
+      z-index: 9999;
       opacity: 0;
       pointer-events: none;
-      z-index: 9999;
       transition: opacity 0.3s ease;
+    }
+    #blackout.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+    /* Popup peringatan */
+    #warning-popup {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      color: #222;
+      padding: 20px 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      font-size: 16px;
+      display: none;
+      z-index: 10000;
     }
   </style>
 </head>
-
 <body oncontextmenu="return false">
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
-  <div id="black-overlay"></div>
+  <div id="blackout"></div>
+  <div id="warning-popup">🚫 Screenshot tidak diizinkan!</div>
 
   <script>
     const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
@@ -66,12 +78,14 @@
 
     const container = document.getElementById("pdf-container");
     const loadingDiv = document.getElementById("loading");
-    const overlay = document.getElementById("black-overlay");
+    const blackout = document.getElementById("blackout");
+    const popup = document.getElementById("warning-popup");
 
     let pdfDoc = null;
     let currentPage = 1;
     const batchSize = 2;
 
+    // Render setiap halaman
     function renderPage(pageNum) {
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
@@ -79,6 +93,7 @@
         const qualityFactor = window.devicePixelRatio || 2;
         const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
+
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
 
@@ -88,6 +103,7 @@
         canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
+
         return page.render({ canvasContext: ctx, viewport }).promise;
       });
     }
@@ -95,13 +111,13 @@
     async function renderBatch() {
       if (!pdfDoc) return;
       loadingDiv.style.display = "block";
-      let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
+      const endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
 
       for (let i = currentPage; i <= endPage; i++) {
         await renderPage(i);
       }
-
       currentPage = endPage + 1;
+
       if (currentPage > pdfDoc.numPages) {
         loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
       } else {
@@ -117,66 +133,46 @@
     // Infinite scroll
     window.addEventListener("scroll", () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
-        if (currentPage <= pdfDoc.numPages) {
-          renderBatch();
-        }
+        if (currentPage <= pdfDoc.numPages) renderBatch();
       }
     });
 
-   // Blokir shortcut umum (save, copy, inspect, print, screenshot)
-document.addEventListener("keydown", e => {
-  const key = e.key.toLowerCase();
-
-  // Blokir kombinasi umum
-  if (
-    (e.ctrlKey && ["s", "p", "u", "c", "x", "a"].includes(key)) ||
-    ["f12"].includes(key)
-  ) {
-    e.preventDefault();
-    alert("Aksi ini tidak diizinkan.");
-  }
-
-  // Deteksi berbagai kombinasi screenshot
-  if (
-    key === "printscreen" ||
-    (e.ctrlKey && e.shiftKey && ["s", "3", "4"].includes(key)) ||
-    (e.metaKey && e.shiftKey && ["3", "4", "s"].includes(key)) ||
-    (e.altKey && key === "printscreen")
-  ) {
-    e.preventDefault();
-    triggerBlackout();
-  }
-});
-
-    // Deteksi devtools (console dibuka)
-    let devtoolsOpen = false;
-    const threshold = 160;
-    setInterval(() => {
-      const widthThreshold = window.outerWidth - window.innerWidth > threshold;
-      const heightThreshold = window.outerHeight - window.innerHeight > threshold;
-      if (widthThreshold || heightThreshold) {
-        if (!devtoolsOpen) {
-          devtoolsOpen = true;
-          triggerBlackout();
-        }
-      } else {
-        devtoolsOpen = false;
-      }
-    }, 500);
-
-    // Efek blackout (layar hitam 5 detik)
+    // Fungsi blackout dan popup
     function triggerBlackout() {
-      overlay.style.opacity = 1;
+      blackout.classList.add("active");
+      popup.style.display = "block";
       setTimeout(() => {
-        overlay.style.opacity = 0;
+        blackout.classList.remove("active");
+        popup.style.display = "none";
       }, 5000);
     }
 
-    // Deteksi keluar tab (blur) → tutup layar
-    window.addEventListener("blur", () => {
-      triggerBlackout();
+    // Blokir shortcut umum + deteksi PrintScreen
+    document.addEventListener("keydown", e => {
+      const key = e.key.toLowerCase();
+      if (
+        (e.ctrlKey && ["s","p","u","c","x","a"].includes(key)) ||
+        ["f12"].includes(key)
+      ) {
+        e.preventDefault();
+        alert("Aksi ini tidak diizinkan.");
+      }
+      if (key === "printscreen") {
+        e.preventDefault();
+        triggerBlackout();
+      }
+    });
+
+    // Deteksi jika user mencoba capture lewat API (beberapa browser Android)
+    let visibilityTimer;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        // kemungkinan user buka overlay screen recorder / screenshot
+        visibilityTimer = setTimeout(triggerBlackout, 300);
+      } else {
+        clearTimeout(visibilityTimer);
+      }
     });
   </script>
 </body>
 </html>
-
