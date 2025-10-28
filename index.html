@@ -1,319 +1,124 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8">
   <title>Viewer eBook</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- PDF.js -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
   <style>
-    /* ---------- Layout & Tampilan Dasar (serupa kode awal) ---------- */
-    html, body { height: 100%; margin: 0; }
     body {
+      margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      -webkit-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
-      user-select: none; /* nonaktifkan seleksi teks */
-      overflow-x: hidden;
     }
-
     #pdf-container {
       display: flex;
       flex-direction: column;
       align-items: center;
       padding: 12px;
-      transition: filter 0.2s ease;
     }
-
     canvas {
-      display: block;
       margin-bottom: 16px;
       border: 1px solid #ccc;
-      background-color: #fff;
+      background-color: white;
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
       max-width: 100%;
       height: auto;
       border-radius: 6px;
-      -webkit-touch-callout: none;
-      -webkit-user-select: none;
-      user-select: none;
-      draggable: false;
     }
-
     .loading {
       text-align: center;
       color: #666;
       margin: 20px;
       font-size: 14px;
     }
-
-    /* ---------- BLACKOUT overlay (full-screen) ---------- */
-    #blackout {
-      position: fixed;
-      inset: 0;
-      background: #000;
-      z-index: 100000;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      pointer-events: all;        /* block interactions while active */
-      color: #fff;
-      font-size: 18px;
-      transition: opacity 0.15s ease;
-    }
-    #blackout.show { display: flex; opacity: 1; }
-    #blackout.hidden { display: none; opacity: 0; }
-
-    /* small mobile helper */
-    @media (max-width: 480px) {
-      .loading { font-size: 13px; }
-    }
   </style>
 </head>
-<body>
-  <!-- Full blackout overlay (empty content for totally black screen) -->
-  <div id="blackout" aria-hidden="true"></div>
-
-  <!-- PDF area -->
+<body oncontextmenu="return false">
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
 
   <script>
-  /*************************************************************************
-   * Viewer eBook — Rapi & Lengkap
-   * - Mempertahankan behavior PDF.js (canvas rendering, batch infinite scroll)
-   * - Mencegah copy/print/inspect via event blocking (best-effort)
-   * - Memuat PDF via fetch -> ArrayBuffer sehingga URL tidak langsung terekspos
-   * - Menampilkan BLACKOUT penuh selama 5 detik bila terdeteksi screenshot-like events
-   *
-   * Limitasi penting: browser tidak dapat menjamin 100% mencegah screenshot.
-   * Untuk proteksi penuh gunakan native app (Android FLAG_SECURE, Electron setContentProtection).
-   ***************************************************************************/
+    const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
 
-  // ---------- Konfigurasi ----------
-  const pdfPath = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf"; // ganti jika perlu
-  const batchSize = 2;                   // muat 2 halaman per batch
-  const blackoutDurationMs = 5000;       // blackout 5 detik
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-  // ---------- PDF.js worker ----------
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const container = document.getElementById("pdf-container");
+    const loadingDiv = document.getElementById("loading");
 
-  // ---------- Elemen DOM ----------
-  const container = document.getElementById("pdf-container");
-  const loadingDiv = document.getElementById("loading");
-  const blackout = document.getElementById("blackout");
+    let pdfDoc = null;
+    let currentPage = 1;
+    const batchSize = 2; // muat 2 halaman per scroll agar ringan
 
-  // ---------- State ----------
-  let pdfDoc = null;
-  let currentPage = 1;
-  let blackoutTimer = null;
+    function renderPage(pageNum) {
+      return pdfDoc.getPage(pageNum).then(page => {
+        const baseViewport = page.getViewport({ scale: 1 });
 
-  // ---------- Utility: fetch PDF as ArrayBuffer ----------
-  async function fetchPdfArrayBuffer(path) {
-    try {
-      const res = await fetch(path, { method: "GET", cache: "no-store", credentials: "same-origin" });
-      if (!res.ok) throw new Error("Gagal mengambil PDF: " + res.status);
-      return await res.arrayBuffer();
-    } catch (err) {
-      console.error(err);
-      alert("Gagal memuat dokumen. Periksa path/akses file.");
-      throw err;
+        // lebar layar maksimal 800px
+        const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
+
+        // tambah faktor kualitas (agar tidak blur)
+        const qualityFactor = window.devicePixelRatio || 2;
+
+        const scale = (desiredWidth * qualityFactor) / baseViewport.width;
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = desiredWidth + "px";
+        canvas.style.height = (viewport.height / qualityFactor) + "px";
+
+        container.appendChild(canvas);
+
+        return page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      });
     }
-  }
 
-  // ---------- Render satu halaman ke canvas ----------
-  function renderPage(pageNum) {
-    return pdfDoc.getPage(pageNum).then(page => {
-      const baseViewport = page.getViewport({ scale: 1 });
-      const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-      const qualityFactor = window.devicePixelRatio || 2;
-      const scale = (desiredWidth * qualityFactor) / baseViewport.width;
-      const viewport = page.getViewport({ scale });
+    async function renderBatch() {
+      if (!pdfDoc) return;
+      loadingDiv.style.display = "block";
 
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+      let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
 
-      // proteksi dasar pada canvas
-      canvas.setAttribute("draggable", "false");
-      canvas.oncontextmenu = e => e.preventDefault();
+      for (let i = currentPage; i <= endPage; i++) {
+        await renderPage(i);
+      }
 
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.width = desiredWidth + "px";
-      canvas.style.height = (viewport.height / qualityFactor) + "px";
+      currentPage = endPage + 1;
 
-      container.appendChild(canvas);
-
-      return page.render({ canvasContext: ctx, viewport }).promise;
-    });
-  }
-
-  // ---------- Render batch halaman ----------
-  async function renderBatch() {
-    if (!pdfDoc) return;
-    loadingDiv.style.display = "block";
-    const endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
-    for (let p = currentPage; p <= endPage; p++) {
-      // tunggu tiap render agar memory/CPU terjaga
-      await renderPage(p);
+      if (currentPage > pdfDoc.numPages) {
+        loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
+      } else {
+        loadingDiv.textContent = "⬇️ Scroll ke bawah untuk lanjut...";
+      }
     }
-    currentPage = endPage + 1;
-    loadingDiv.textContent = currentPage > pdfDoc.numPages ? "✅ Semua halaman selesai dimuat." : "⬇️ Scroll ke bawah untuk lanjut...";
-  }
 
-  // ---------- Inisialisasi PDF ----------
-  (async function initPdf() {
-    try {
-      const data = await fetchPdfArrayBuffer(pdfPath);
-      const loadingTask = pdfjsLib.getDocument({ data });
-      pdfDoc = await loadingTask.promise;
+    pdfjsLib.getDocument(url).promise.then(pdf => {
+      pdfDoc = pdf;
       renderBatch();
-    } catch (err) {
-      console.error("Error init PDF:", err);
-    }
-  })();
+    });
 
-  // ---------- Infinite scroll ----------
-  window.addEventListener("scroll", () => {
-    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
-      if (currentPage <= (pdfDoc ? pdfDoc.numPages : 0)) renderBatch();
-    }
-  });
-
-  // ---------- Interaction protections ----------
-  // nonaktifkan klik kanan / seleksi / drag / copy/paste/cut
-  document.addEventListener("contextmenu", e => e.preventDefault(), { passive: false });
-  document.addEventListener("selectstart", e => e.preventDefault(), { passive: false });
-  document.addEventListener("dragstart", e => e.preventDefault(), { passive: false });
-
-  document.addEventListener("copy", e => {
-    e.preventDefault();
-    try { navigator.clipboard && navigator.clipboard.writeText && navigator.clipboard.writeText(""); } catch (_) {}
-  }, { passive: false });
-
-  document.addEventListener("cut", e => { e.preventDefault(); }, { passive: false });
-  document.addEventListener("paste", e => { e.preventDefault(); }, { passive: false });
-
-  // observasi node yang ditambahkan (canvas) agar juga tidak mengizinkan contextmenu/drag/copy
-  new MutationObserver(mutations => {
-    for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (node.nodeType === 1 && node.tagName === "CANVAS") {
-          node.oncontextmenu = e => e.preventDefault();
-          node.setAttribute("draggable", "false");
-          node.style.userSelect = "none";
-          node.addEventListener("copy", e => e.preventDefault());
+    // infinite scroll
+    window.addEventListener("scroll", () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+        if (currentPage <= pdfDoc.numPages) {
+          renderBatch();
         }
       }
-    }
-  }).observe(container, { childList: true });
+    });
 
-  // ---------- Keyboard shortcuts blocking & screenshot detection ----------
-  document.addEventListener("keydown", e => {
-    // normalize key for comparison
-    const key = e.key ? e.key.toLowerCase() : "";
-
-    // block common actions: Ctrl+S, Ctrl+P, Ctrl+U
-    if (e.ctrlKey && ["s", "p", "u"].includes(key)) {
-      e.preventDefault();
-      flashBlackoutShort();
-      return;
-    }
-
-    // block devtools
-    if (e.key === "F12" || (e.ctrlKey && e.shiftKey && key === "i")) {
-      e.preventDefault();
-      flashBlackoutShort();
-      return;
-    }
-
-    // detect screenshot-like shortcuts -> trigger 5s blackout
-    if (
-      e.key === "PrintScreen" ||
-      (e.ctrlKey && e.shiftKey && key === "s") ||   // Ctrl+Shift+S
-      (e.metaKey && e.shiftKey && key === "s")      // Cmd+Shift+S (Mac)
-    ) {
-      e.preventDefault();
-      triggerBlackout();
-    }
-  }, { passive: false });
-
-  // Some platforms deliver PrintScreen on keyup instead of keydown
-  document.addEventListener("keyup", e => {
-    if (e.key === "PrintScreen" || e.key === "Print") {
-      e.preventDefault();
-      triggerBlackout();
-    }
-  }, { passive: false });
-
-  // ---------- Focus/Visibility heuristics ----------
-  // Jika tab kehilangan fokus / visibility berubah (user mungkin membuka snipping tool), trigger blackout (best-effort)
-  let hadFocus = document.hasFocus();
-  window.addEventListener("blur", () => {
-    if (hadFocus === true) triggerBlackout();
-    hadFocus = false;
-  });
-  window.addEventListener("focus", () => { hadFocus = true; });
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) triggerBlackout();
-  });
-
-  // ---------- Blackout functions ----------
-  function triggerBlackout() {
-    if (blackoutTimer) return; // jika sudah blackout, jangan duplikasi
-
-    // show blackout
-    blackout.classList.remove("hidden");
-    blackout.classList.add("show");
-
-    // disable scroll/interaksi page untuk menghindari perubahan saat blackout
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const prevBodyOverflow = document.body.style.overflow;
-    document.documentElement.style.overflow = "hidden";
-    document.body.style.overflow = "hidden";
-
-    // coba kosongkan clipboard (jika tersedia) supaya PrintScreen ke clipboard minimal
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText("");
+    // blokir shortcut
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
+        e.preventDefault();
+        alert("Aksi ini tidak diizinkan.");
       }
-    } catch (_) { /* ignore */ }
-
-    blackoutTimer = setTimeout(() => {
-      blackout.classList.remove("show");
-      blackout.classList.add("hidden");
-      document.documentElement.style.overflow = prevHtmlOverflow || "";
-      document.body.style.overflow = prevBodyOverflow || "";
-      blackoutTimer = null;
-    }, blackoutDurationMs);
-  }
-
-  // short flash for blocked shortcuts (not full blackout)
-  function flashBlackoutShort(ms = 1200) {
-    if (blackoutTimer) return;
-    blackout.style.background = "rgba(0,0,0,0.85)";
-    blackout.textContent = "Aksi diblokir";
-    blackout.classList.remove("hidden");
-    blackout.classList.add("show");
-    setTimeout(() => {
-      blackout.textContent = "";
-      blackout.style.background = "#000";
-      if (!blackoutTimer) { blackout.classList.remove("show"); blackout.classList.add("hidden"); }
-    }, ms);
-  }
-
-  // ---------- Final note (in-code) ----------
-  // Perlu diingat: proteksi di atas bersifat "best-effort" untuk web.
-  // Jika targetmu adalah mencegah screenshot sepenuhnya di HP/laptop, solusi praktis:
-  // - Android: jadikan halaman ini WebView dan set FLAG_SECURE pada Activity
-  // - Desktop: bungkus di Electron dan panggil BrowserWindow.setContentProtection(true)
-  // Aku bisa bantu membuat contoh Android/Electron jika kamu mau.
-
+    });
   </script>
 </body>
 </html>
+
