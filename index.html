@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Viewer eBook</title>
+  <title>Viewer eBook Aman</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
@@ -18,7 +18,6 @@
       flex-direction: column;
       align-items: center;
       padding: 12px;
-      transition: filter 0.3s ease;
     }
     canvas {
       margin-bottom: 16px;
@@ -35,28 +34,47 @@
       margin: 20px;
       font-size: 14px;
     }
-    /* Overlay untuk anti-screenshot */
-    #anti-screenshot {
+    /* watermark bergerak */
+    .watermark {
+      position: fixed;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 1000;
+      width: 100%;
+      height: 100%;
+      color: rgba(0,0,0,0.1);
+      font-size: 24px;
+      font-weight: bold;
+      user-select: none;
+      animation: move 10s linear infinite alternate;
+    }
+    @keyframes move {
+      from { transform: translate(0, 0); }
+      to { transform: translate(50px, 50px); }
+    }
+    /* overlay video anti-screenshot */
+    #antiVideo {
       position: fixed;
       top: 0;
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: rgba(0,0,0,0.7);
+      object-fit: cover;
       z-index: 9999;
-      display: none;
-      justify-content: center;
-      align-items: center;
-      color: white;
-      font-size: 18px;
-      backdrop-filter: blur(8px);
+      opacity: 0.01; /* nyaris tak terlihat */
+      pointer-events: none;
     }
   </style>
 </head>
 <body oncontextmenu="return false">
+  <div class="watermark" id="watermark">DOKUMEN RAHASIA - DILARANG SCREENSHOT</div>
+  <video id="antiVideo" autoplay loop muted playsinline>
+    <source src="https://cdn.jsdelivr.net/gh/napthedev/assets/black.webm" type="video/webm">
+  </video>
+
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
-  <div id="anti-screenshot">🚫 Screenshot dinonaktifkan</div>
 
   <script>
     const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
@@ -66,7 +84,6 @@
 
     const container = document.getElementById("pdf-container");
     const loadingDiv = document.getElementById("loading");
-    const overlay = document.getElementById("anti-screenshot");
 
     let pdfDoc = null;
     let currentPage = 1;
@@ -103,12 +120,10 @@
       }
 
       currentPage = endPage + 1;
-
-      if (currentPage > pdfDoc.numPages) {
-        loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
-      } else {
-        loadingDiv.textContent = "⬇️ Scroll ke bawah untuk lanjut...";
-      }
+      loadingDiv.textContent =
+        currentPage > pdfDoc.numPages
+          ? "✅ Semua halaman selesai dimuat."
+          : "⬇️ Scroll ke bawah untuk lanjut...";
     }
 
     pdfjsLib.getDocument(url).promise.then(pdf => {
@@ -124,29 +139,12 @@
       }
     });
 
-    // blokir shortcut umum
+    // blokir shortcut
     document.addEventListener("keydown", e => {
-      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
+      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12" || e.key === "PrintScreen") {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
       }
-      // blokir PrintScreen
-      if (e.key === "PrintScreen") {
-        e.preventDefault();
-        navigator.clipboard.writeText(""); // kosongkan clipboard
-        overlay.style.display = "flex";
-        setTimeout(() => overlay.style.display = "none", 2000);
-      }
-    });
-
-    // sembunyikan konten saat window kehilangan fokus (indikasi snipping tool aktif)
-    window.addEventListener("blur", () => {
-      container.style.filter = "blur(10px)";
-      overlay.style.display = "flex";
-    });
-    window.addEventListener("focus", () => {
-      container.style.filter = "none";
-      overlay.style.display = "none";
     });
   </script>
 </body>
