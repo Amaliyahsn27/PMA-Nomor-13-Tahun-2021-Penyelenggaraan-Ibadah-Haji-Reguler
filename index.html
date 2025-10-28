@@ -32,9 +32,27 @@
       margin: 20px;
       font-size: 14px;
     }
+
+    /* === Tambahan: overlay video anti-screenshot === */
+    #anti-capture {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 9999;
+      opacity: 0.01; /* hampir tak terlihat */
+      pointer-events: none;
+      object-fit: cover;
+    }
   </style>
 </head>
 <body oncontextmenu="return false">
+  <!-- Lapisan video untuk mencegah screenshot -->
+  <video id="anti-capture" autoplay loop muted playsinline>
+    <source src="https://cdn.jsdelivr.net/gh/napthedev/assets/black.webm" type="video/webm">
+  </video>
+
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
 
@@ -121,4 +139,3 @@
   </script>
 </body>
 </html>
-
