@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Viewer eBook</title>
+  <title>Viewer eBook Aman</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
@@ -10,6 +10,11 @@
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+      -moz-user-select: none;
+      overflow-x: hidden;
     }
     #pdf-container {
       display: flex;
@@ -32,11 +37,26 @@
       margin: 20px;
       font-size: 14px;
     }
+    /* Overlay hitam */
+    #black-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: black;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
   </style>
 </head>
+
 <body oncontextmenu="return false">
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
+  <div id="black-overlay"></div>
 
   <script>
     const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
@@ -46,24 +66,19 @@
 
     const container = document.getElementById("pdf-container");
     const loadingDiv = document.getElementById("loading");
+    const overlay = document.getElementById("black-overlay");
 
     let pdfDoc = null;
     let currentPage = 1;
-    const batchSize = 2; // muat 2 halaman per scroll agar ringan
+    const batchSize = 2;
 
     function renderPage(pageNum) {
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
-
-        // lebar layar maksimal 800px
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-
-        // tambah faktor kualitas (agar tidak blur)
         const qualityFactor = window.devicePixelRatio || 2;
-
         const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
-
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
 
@@ -73,15 +88,13 @@
         canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
-
-        return page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        return page.render({ canvasContext: ctx, viewport }).promise;
       });
     }
 
     async function renderBatch() {
       if (!pdfDoc) return;
       loadingDiv.style.display = "block";
-
       let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
 
       for (let i = currentPage; i <= endPage; i++) {
@@ -89,7 +102,6 @@
       }
 
       currentPage = endPage + 1;
-
       if (currentPage > pdfDoc.numPages) {
         loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
       } else {
@@ -102,7 +114,7 @@
       renderBatch();
     });
 
-    // infinite scroll
+    // Infinite scroll
     window.addEventListener("scroll", () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
         if (currentPage <= pdfDoc.numPages) {
@@ -111,14 +123,52 @@
       }
     });
 
-    // blokir shortcut
+    // Blokir shortcut
     document.addEventListener("keydown", e => {
-      if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
+      const key = e.key.toLowerCase();
+      if (
+        (e.ctrlKey && ["s", "p", "u", "c", "x", "a"].includes(key)) ||
+        ["f12"].includes(key)
+      ) {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
       }
+
+      // Deteksi Print Screen
+      if (key === "printscreen") {
+        e.preventDefault();
+        triggerBlackout();
+      }
+    });
+
+    // Deteksi devtools (console dibuka)
+    let devtoolsOpen = false;
+    const threshold = 160;
+    setInterval(() => {
+      const widthThreshold = window.outerWidth - window.innerWidth > threshold;
+      const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+      if (widthThreshold || heightThreshold) {
+        if (!devtoolsOpen) {
+          devtoolsOpen = true;
+          triggerBlackout();
+        }
+      } else {
+        devtoolsOpen = false;
+      }
+    }, 500);
+
+    // Efek blackout (layar hitam 5 detik)
+    function triggerBlackout() {
+      overlay.style.opacity = 1;
+      setTimeout(() => {
+        overlay.style.opacity = 0;
+      }, 5000);
+    }
+
+    // Deteksi keluar tab (blur) → tutup layar
+    window.addEventListener("blur", () => {
+      triggerBlackout();
     });
   </script>
 </body>
 </html>
-
