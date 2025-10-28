@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <title>Viewer eBook</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
   <style>
-    html, body { height: 100%; }
+    /* ---------- Layout & Tampilan Dasar (serupa kode awal) ---------- */
+    html, body { height: 100%; margin: 0; }
     body {
-      margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
       -webkit-user-select: none;
       -moz-user-select: none;
       -ms-user-select: none;
-      user-select: none;
+      user-select: none; /* nonaktifkan seleksi teks */
       overflow-x: hidden;
     }
 
@@ -25,10 +27,12 @@
       padding: 12px;
       transition: filter 0.2s ease;
     }
+
     canvas {
+      display: block;
       margin-bottom: 16px;
       border: 1px solid #ccc;
-      background-color: white;
+      background-color: #fff;
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
       max-width: 100%;
       height: auto;
@@ -36,8 +40,9 @@
       -webkit-touch-callout: none;
       -webkit-user-select: none;
       user-select: none;
-      display: block;
+      draggable: false;
     }
+
     .loading {
       text-align: center;
       color: #666;
@@ -45,7 +50,7 @@
       font-size: 14px;
     }
 
-    /* BLACKOUT overlay (full screen) */
+    /* ---------- BLACKOUT overlay (full-screen) ---------- */
     #blackout {
       position: fixed;
       inset: 0;
@@ -54,231 +59,261 @@
       display: none;
       align-items: center;
       justify-content: center;
+      pointer-events: all;        /* block interactions while active */
       color: #fff;
       font-size: 18px;
-      pointer-events: all; /* block interactions while black */
+      transition: opacity 0.15s ease;
     }
-    #blackout.hidden { display: none; }
-    #blackout.show { display: flex; }
+    #blackout.show { display: flex; opacity: 1; }
+    #blackout.hidden { display: none; opacity: 0; }
 
-    /* small helper for mobile */
+    /* small mobile helper */
     @media (max-width: 480px) {
       .loading { font-size: 13px; }
     }
   </style>
 </head>
 <body>
-  <!-- BLACKOUT overlay yang menutupi seluruh layar saat dipicu -->
-  <div id="blackout" class="hidden" aria-hidden="true"> </div>
+  <!-- Full blackout overlay (empty content for totally black screen) -->
+  <div id="blackout" aria-hidden="true"></div>
 
+  <!-- PDF area -->
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
 
   <script>
-    // --- CONFIG: ganti nama file PDF sesuai lokasi/host mu ---
-    const pdfPath = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
+  /*************************************************************************
+   * Viewer eBook — Rapi & Lengkap
+   * - Mempertahankan behavior PDF.js (canvas rendering, batch infinite scroll)
+   * - Mencegah copy/print/inspect via event blocking (best-effort)
+   * - Memuat PDF via fetch -> ArrayBuffer sehingga URL tidak langsung terekspos
+   * - Menampilkan BLACKOUT penuh selama 5 detik bila terdeteksi screenshot-like events
+   *
+   * Limitasi penting: browser tidak dapat menjamin 100% mencegah screenshot.
+   * Untuk proteksi penuh gunakan native app (Android FLAG_SECURE, Electron setContentProtection).
+   ***************************************************************************/
 
-    // pdf.js worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  // ---------- Konfigurasi ----------
+  const pdfPath = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf"; // ganti jika perlu
+  const batchSize = 2;                   // muat 2 halaman per batch
+  const blackoutDurationMs = 5000;       // blackout 5 detik
 
-    const container = document.getElementById("pdf-container");
-    const loadingDiv = document.getElementById("loading");
-    const blackout = document.getElementById("blackout");
+  // ---------- PDF.js worker ----------
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-    let pdfDoc = null;
-    let currentPage = 1;
-    const batchSize = 2; // muat 2 halaman per scroll
-    const blackoutDurationMs = 5000; // 5 detik
+  // ---------- Elemen DOM ----------
+  const container = document.getElementById("pdf-container");
+  const loadingDiv = document.getElementById("loading");
+  const blackout = document.getElementById("blackout");
 
-    // fetch PDF sebagai arrayBuffer -> membuat URL langsung kurang terekspos
-    async function loadPdfData(path) {
-      try {
-        const res = await fetch(path, { method: "GET", cache: "no-store" });
-        if (!res.ok) throw new Error("Gagal mengambil PDF: " + res.status);
-        const ab = await res.arrayBuffer();
-        return ab;
-      } catch (err) {
-        console.error(err);
-        alert("Gagal memuat dokumen. Pastikan file tersedia di server.");
-        throw err;
-      }
+  // ---------- State ----------
+  let pdfDoc = null;
+  let currentPage = 1;
+  let blackoutTimer = null;
+
+  // ---------- Utility: fetch PDF as ArrayBuffer ----------
+  async function fetchPdfArrayBuffer(path) {
+    try {
+      const res = await fetch(path, { method: "GET", cache: "no-store", credentials: "same-origin" });
+      if (!res.ok) throw new Error("Gagal mengambil PDF: " + res.status);
+      return await res.arrayBuffer();
+    } catch (err) {
+      console.error(err);
+      alert("Gagal memuat dokumen. Periksa path/akses file.");
+      throw err;
     }
+  }
 
-    function renderPage(pageNum) {
-      return pdfDoc.getPage(pageNum).then(page => {
-        const baseViewport = page.getViewport({ scale: 1 });
-        const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-        const qualityFactor = window.devicePixelRatio || 2;
-        const scale = (desiredWidth * qualityFactor) / baseViewport.width;
-        const viewport = page.getViewport({ scale });
+  // ---------- Render satu halaman ke canvas ----------
+  function renderPage(pageNum) {
+    return pdfDoc.getPage(pageNum).then(page => {
+      const baseViewport = page.getViewport({ scale: 1 });
+      const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
+      const qualityFactor = window.devicePixelRatio || 2;
+      const scale = (desiredWidth * qualityFactor) / baseViewport.width;
+      const viewport = page.getViewport({ scale });
 
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
 
-        canvas.setAttribute("draggable", "false");
-        canvas.oncontextmenu = e => e.preventDefault();
+      // proteksi dasar pada canvas
+      canvas.setAttribute("draggable", "false");
+      canvas.oncontextmenu = e => e.preventDefault();
 
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = desiredWidth + "px";
-        canvas.style.height = (viewport.height / qualityFactor) + "px";
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.width = desiredWidth + "px";
+      canvas.style.height = (viewport.height / qualityFactor) + "px";
 
-        container.appendChild(canvas);
-        return page.render({ canvasContext: ctx, viewport: viewport }).promise;
-      });
-    }
+      container.appendChild(canvas);
 
-    async function renderBatch() {
-      if (!pdfDoc) return;
-      loadingDiv.style.display = "block";
-      const endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
-      for (let i = currentPage; i <= endPage; i++) {
-        await renderPage(i);
-      }
-      currentPage = endPage + 1;
-      loadingDiv.textContent = currentPage > pdfDoc.numPages ? "✅ Semua halaman selesai dimuat." : "⬇️ Scroll ke bawah untuk lanjut...";
-    }
-
-    (async () => {
-      try {
-        const data = await loadPdfData(pdfPath);
-        const loadingTask = pdfjsLib.getDocument({ data });
-        pdfDoc = await loadingTask.promise;
-        renderBatch();
-      } catch (err) {
-        console.error("PDF load error:", err);
-      }
-    })();
-
-    // infinite scroll
-    window.addEventListener("scroll", () => {
-      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
-        if (currentPage <= (pdfDoc ? pdfDoc.numPages : 0)) renderBatch();
-      }
+      return page.render({ canvasContext: ctx, viewport }).promise;
     });
+  }
 
-    // --- Proteksi copy / paste / right-click / selection / drag ---
-    document.addEventListener("copy", e => { e.preventDefault(); try { navigator.clipboard && navigator.clipboard.writeText && navigator.clipboard.writeText(""); } catch(_){} });
-    document.addEventListener("cut", e => { e.preventDefault(); });
-    document.addEventListener("paste", e => { e.preventDefault(); });
-    document.addEventListener("contextmenu", e => e.preventDefault());
-    document.addEventListener("selectstart", e => e.preventDefault());
-    document.addEventListener("dragstart", e => e.preventDefault());
-
-    // blokir shortcut umum (save, print, view-source, devtools)
-    document.addEventListener("keydown", e => {
-      const key = e.key ? e.key.toLowerCase() : "";
-      // Ctrl+S, Ctrl+P, Ctrl+U
-      if (e.ctrlKey && ["s","p","u"].includes(key)) {
-        e.preventDefault();
-        triggerTemporaryNotice("Aksi diblokir");
-      }
-      // DevTools
-      if (e.key === "F12" || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "i")) {
-        e.preventDefault();
-        triggerTemporaryNotice("Akses developer tools diblokir");
-      }
-      // deteksi shortcut screenshot umum
-      if (
-        e.key === "PrintScreen" ||
-        (e.ctrlKey && e.shiftKey && (key === "s")) || // Ctrl+Shift+S
-        (e.metaKey && e.shiftKey && (key === "s"))    // Meta(⌘)+Shift+S (Mac)
-      ) {
-        e.preventDefault();
-        triggerBlackout();
-      }
-    }, { passive: false });
-
-    // beberapa browser/OS tidak melempar PrintScreen lewat keydown -> tangani juga keyup
-    document.addEventListener("keyup", e => {
-      if (e.key === "PrintScreen" || e.key === "Print") {
-        e.preventDefault();
-        triggerBlackout();
-      }
-    });
-
-    // jika tab kehilangan fokus (mungkin buka snipping tool), trigger blackout (best-effort)
-    let lastFocusState = document.hasFocus();
-    window.addEventListener("blur", () => {
-      // hanya trigger bila sebelumnya fokus (hindari trigger berulang yg mengganggu)
-      if (document.hasFocus() === false && lastFocusState === true) {
-        triggerBlackout();
-      }
-      lastFocusState = false;
-    });
-    window.addEventListener("focus", () => { lastFocusState = true; });
-
-    // juga deteksi perubahan visibility (mis. pindah tab)
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        triggerBlackout();
-      }
-    });
-
-    // fungsi blackout: tampilkan overlay hitam full-screen selama blackoutDurationMs
-    let blackoutTimer = null;
-    function triggerBlackout() {
-      if (blackoutTimer) return; // jika sudah sedang blackout, jangan ulang
-      // tampilkan overlay hitam
-      blackout.classList.remove("hidden");
-      blackout.classList.add("show");
-      // disable scroll sementara agar tidak mengacaukan layout
-      document.documentElement.style.overflow = "hidden";
-      document.body.style.overflow = "hidden";
-
-      // coba kosongkan clipboard untuk mengurangi kemungkinan PrintScreen ke clipboard (jika API tersedia)
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("");
-        }
-      } catch (e) {
-        // ignore
-      }
-
-      blackoutTimer = setTimeout(() => {
-        blackout.classList.remove("show");
-        blackout.classList.add("hidden");
-        document.documentElement.style.overflow = "";
-        document.body.style.overflow = "";
-        clearTimeout(blackoutTimer);
-        blackoutTimer = null;
-      }, blackoutDurationMs);
+  // ---------- Render batch halaman ----------
+  async function renderBatch() {
+    if (!pdfDoc) return;
+    loadingDiv.style.display = "block";
+    const endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
+    for (let p = currentPage; p <= endPage; p++) {
+      // tunggu tiap render agar memory/CPU terjaga
+      await renderPage(p);
     }
+    currentPage = endPage + 1;
+    loadingDiv.textContent = currentPage > pdfDoc.numPages ? "✅ Semua halaman selesai dimuat." : "⬇️ Scroll ke bawah untuk lanjut...";
+  }
 
-    // small temporary notice (re-use blackout text area for message if needed)
-    function triggerTemporaryNotice(msg = "Aksi diblokir", ms = 1200) {
-      const prev = blackout.classList.contains("show");
-      // show a transient message using blackout overlay but semi-transparent
-      blackout.style.background = "rgba(0,0,0,0.85)";
-      blackout.textContent = msg;
-      blackout.classList.remove("hidden");
-      blackout.classList.add("show");
-      setTimeout(() => {
-        blackout.textContent = "";
-        blackout.style.background = "#000";
-        if (!prev && blackoutTimer === null) {
-          blackout.classList.remove("show");
-          blackout.classList.add("hidden");
-        }
-      }, ms);
+  // ---------- Inisialisasi PDF ----------
+  (async function initPdf() {
+    try {
+      const data = await fetchPdfArrayBuffer(pdfPath);
+      const loadingTask = pdfjsLib.getDocument({ data });
+      pdfDoc = await loadingTask.promise;
+      renderBatch();
+    } catch (err) {
+      console.error("Error init PDF:", err);
     }
+  })();
 
-    // pastikan canvases yg ditambahkan juga tidak mengizinkan context menu atau selection
-    new MutationObserver(mutations => {
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType === 1 && node.tagName === "CANVAS") {
-            node.oncontextmenu = e => e.preventDefault();
-            node.setAttribute("draggable", "false");
-            node.style.userSelect = "none";
-            node.addEventListener("copy", e => e.preventDefault());
-          }
+  // ---------- Infinite scroll ----------
+  window.addEventListener("scroll", () => {
+    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+      if (currentPage <= (pdfDoc ? pdfDoc.numPages : 0)) renderBatch();
+    }
+  });
+
+  // ---------- Interaction protections ----------
+  // nonaktifkan klik kanan / seleksi / drag / copy/paste/cut
+  document.addEventListener("contextmenu", e => e.preventDefault(), { passive: false });
+  document.addEventListener("selectstart", e => e.preventDefault(), { passive: false });
+  document.addEventListener("dragstart", e => e.preventDefault(), { passive: false });
+
+  document.addEventListener("copy", e => {
+    e.preventDefault();
+    try { navigator.clipboard && navigator.clipboard.writeText && navigator.clipboard.writeText(""); } catch (_) {}
+  }, { passive: false });
+
+  document.addEventListener("cut", e => { e.preventDefault(); }, { passive: false });
+  document.addEventListener("paste", e => { e.preventDefault(); }, { passive: false });
+
+  // observasi node yang ditambahkan (canvas) agar juga tidak mengizinkan contextmenu/drag/copy
+  new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === 1 && node.tagName === "CANVAS") {
+          node.oncontextmenu = e => e.preventDefault();
+          node.setAttribute("draggable", "false");
+          node.style.userSelect = "none";
+          node.addEventListener("copy", e => e.preventDefault());
         }
       }
-    }).observe(container, { childList: true });
+    }
+  }).observe(container, { childList: true });
 
-    // catatan: browser limitations tetap ada. Untuk proteksi penuh pada device, gunakan native app (Android FLAG_SECURE, Electron setContentProtection, dll).
+  // ---------- Keyboard shortcuts blocking & screenshot detection ----------
+  document.addEventListener("keydown", e => {
+    // normalize key for comparison
+    const key = e.key ? e.key.toLowerCase() : "";
+
+    // block common actions: Ctrl+S, Ctrl+P, Ctrl+U
+    if (e.ctrlKey && ["s", "p", "u"].includes(key)) {
+      e.preventDefault();
+      flashBlackoutShort();
+      return;
+    }
+
+    // block devtools
+    if (e.key === "F12" || (e.ctrlKey && e.shiftKey && key === "i")) {
+      e.preventDefault();
+      flashBlackoutShort();
+      return;
+    }
+
+    // detect screenshot-like shortcuts -> trigger 5s blackout
+    if (
+      e.key === "PrintScreen" ||
+      (e.ctrlKey && e.shiftKey && key === "s") ||   // Ctrl+Shift+S
+      (e.metaKey && e.shiftKey && key === "s")      // Cmd+Shift+S (Mac)
+    ) {
+      e.preventDefault();
+      triggerBlackout();
+    }
+  }, { passive: false });
+
+  // Some platforms deliver PrintScreen on keyup instead of keydown
+  document.addEventListener("keyup", e => {
+    if (e.key === "PrintScreen" || e.key === "Print") {
+      e.preventDefault();
+      triggerBlackout();
+    }
+  }, { passive: false });
+
+  // ---------- Focus/Visibility heuristics ----------
+  // Jika tab kehilangan fokus / visibility berubah (user mungkin membuka snipping tool), trigger blackout (best-effort)
+  let hadFocus = document.hasFocus();
+  window.addEventListener("blur", () => {
+    if (hadFocus === true) triggerBlackout();
+    hadFocus = false;
+  });
+  window.addEventListener("focus", () => { hadFocus = true; });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) triggerBlackout();
+  });
+
+  // ---------- Blackout functions ----------
+  function triggerBlackout() {
+    if (blackoutTimer) return; // jika sudah blackout, jangan duplikasi
+
+    // show blackout
+    blackout.classList.remove("hidden");
+    blackout.classList.add("show");
+
+    // disable scroll/interaksi page untuk menghindari perubahan saat blackout
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+
+    // coba kosongkan clipboard (jika tersedia) supaya PrintScreen ke clipboard minimal
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText("");
+      }
+    } catch (_) { /* ignore */ }
+
+    blackoutTimer = setTimeout(() => {
+      blackout.classList.remove("show");
+      blackout.classList.add("hidden");
+      document.documentElement.style.overflow = prevHtmlOverflow || "";
+      document.body.style.overflow = prevBodyOverflow || "";
+      blackoutTimer = null;
+    }, blackoutDurationMs);
+  }
+
+  // short flash for blocked shortcuts (not full blackout)
+  function flashBlackoutShort(ms = 1200) {
+    if (blackoutTimer) return;
+    blackout.style.background = "rgba(0,0,0,0.85)";
+    blackout.textContent = "Aksi diblokir";
+    blackout.classList.remove("hidden");
+    blackout.classList.add("show");
+    setTimeout(() => {
+      blackout.textContent = "";
+      blackout.style.background = "#000";
+      if (!blackoutTimer) { blackout.classList.remove("show"); blackout.classList.add("hidden"); }
+    }, ms);
+  }
+
+  // ---------- Final note (in-code) ----------
+  // Perlu diingat: proteksi di atas bersifat "best-effort" untuk web.
+  // Jika targetmu adalah mencegah screenshot sepenuhnya di HP/laptop, solusi praktis:
+  // - Android: jadikan halaman ini WebView dan set FLAG_SECURE pada Activity
+  // - Desktop: bungkus di Electron dan panggil BrowserWindow.setContentProtection(true)
+  // Aku bisa bantu membuat contoh Android/Electron jika kamu mau.
+
   </script>
 </body>
 </html>
