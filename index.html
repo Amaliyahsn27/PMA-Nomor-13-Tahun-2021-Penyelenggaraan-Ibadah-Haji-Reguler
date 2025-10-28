@@ -10,12 +10,15 @@
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
+      overflow-x: hidden;
+      position: relative;
     }
     #pdf-container {
       display: flex;
       flex-direction: column;
       align-items: center;
       padding: 12px;
+      transition: filter 0.3s ease;
     }
     canvas {
       margin-bottom: 16px;
@@ -32,11 +35,28 @@
       margin: 20px;
       font-size: 14px;
     }
+    /* Overlay untuk anti-screenshot */
+    #anti-screenshot {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0,0,0,0.7);
+      z-index: 9999;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      font-size: 18px;
+      backdrop-filter: blur(8px);
+    }
   </style>
 </head>
 <body oncontextmenu="return false">
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
+  <div id="anti-screenshot">🚫 Screenshot dinonaktifkan</div>
 
   <script>
     const url = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
@@ -46,21 +66,17 @@
 
     const container = document.getElementById("pdf-container");
     const loadingDiv = document.getElementById("loading");
+    const overlay = document.getElementById("anti-screenshot");
 
     let pdfDoc = null;
     let currentPage = 1;
-    const batchSize = 2; // muat 2 halaman per scroll agar ringan
+    const batchSize = 2;
 
     function renderPage(pageNum) {
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
-
-        // lebar layar maksimal 800px
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-
-        // tambah faktor kualitas (agar tidak blur)
         const qualityFactor = window.devicePixelRatio || 2;
-
         const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
 
@@ -73,7 +89,6 @@
         canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
-
         return page.render({ canvasContext: ctx, viewport: viewport }).promise;
       });
     }
@@ -83,7 +98,6 @@
       loadingDiv.style.display = "block";
 
       let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
-
       for (let i = currentPage; i <= endPage; i++) {
         await renderPage(i);
       }
@@ -102,7 +116,6 @@
       renderBatch();
     });
 
-    // infinite scroll
     window.addEventListener("scroll", () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
         if (currentPage <= pdfDoc.numPages) {
@@ -111,12 +124,29 @@
       }
     });
 
-    // blokir shortcut
+    // blokir shortcut umum
     document.addEventListener("keydown", e => {
       if ((e.ctrlKey && ["s","p","u"].includes(e.key.toLowerCase())) || e.key === "F12") {
         e.preventDefault();
         alert("Aksi ini tidak diizinkan.");
       }
+      // blokir PrintScreen
+      if (e.key === "PrintScreen") {
+        e.preventDefault();
+        navigator.clipboard.writeText(""); // kosongkan clipboard
+        overlay.style.display = "flex";
+        setTimeout(() => overlay.style.display = "none", 2000);
+      }
+    });
+
+    // sembunyikan konten saat window kehilangan fokus (indikasi snipping tool aktif)
+    window.addEventListener("blur", () => {
+      container.style.filter = "blur(10px)";
+      overlay.style.display = "flex";
+    });
+    window.addEventListener("focus", () => {
+      container.style.filter = "none";
+      overlay.style.display = "none";
     });
   </script>
 </body>
