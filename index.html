@@ -6,20 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
-    /* --- gaya utama (tetap seperti semula) --- */
-    html,body {
-      height: 100%;
-    }
+    html, body { height: 100%; }
     body {
       margin: 0;
       background: #f0f0f0;
       font-family: Arial, sans-serif;
-      -webkit-user-select: none; /* Safari/Chrome iOS */
+      -webkit-user-select: none;
       -moz-user-select: none;
       -ms-user-select: none;
-      user-select: none; /* nonaktifkan seleksi teks */
+      user-select: none;
       overflow-x: hidden;
     }
+
     #pdf-container {
       display: flex;
       flex-direction: column;
@@ -35,10 +33,9 @@
       max-width: 100%;
       height: auto;
       border-radius: 6px;
-      -webkit-touch-callout: none; /* disable callout on long-press iOS */
+      -webkit-touch-callout: none;
       -webkit-user-select: none;
       user-select: none;
-      pointer-events: auto;
       display: block;
     }
     .loading {
@@ -48,108 +45,55 @@
       font-size: 14px;
     }
 
-    /* --- overlay video anti-capture --- */
-    #anti-capture-video {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      z-index: 9998; /* di atas konten tapi di bawah watermark/notice */
-      opacity: 0.01; /* hampir tak terlihat, tapi memengaruhi beberapa screenshot tools */
-      pointer-events: none; /* biarkan event lewat ke bawah (scroll tetap bekerja) */
-    }
-
-    /* --- watermark bergerak --- */
-    .watermark {
-      position: fixed;
-      top: 0;
-      left: 0;
-      z-index: 9999;
-      width: 100%;
-      height: 100%;
-      pointer-events: none; /* jangan ganggu interaksi */
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      mix-blend-mode: normal;
-      user-select: none;
-    }
-    .watermark span {
-      color: rgba(0,0,0,0.06);
-      font-size: 28px;
-      font-weight: 700;
-      transform: rotate(-25deg);
-      white-space: nowrap;
-      display: inline-block;
-      animation: move 12s linear infinite;
-    }
-    @keyframes move {
-      0% { transform: translate(-30%, -30%) rotate(-25deg); }
-      50% { transform: translate(30%, 30%) rotate(-25deg); }
-      100% { transform: translate(-30%, -30%) rotate(-25deg); }
-    }
-
-    /* --- overlay notice sementara saat PrintScreen / deteksi --- */
-    #notice-overlay {
+    /* BLACKOUT overlay (full screen) */
+    #blackout {
       position: fixed;
       inset: 0;
+      background: #000;
+      z-index: 100000;
       display: none;
-      z-index: 10000;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.6);
-      color: white;
+      color: #fff;
       font-size: 18px;
-      pointer-events: none;
+      pointer-events: all; /* block interactions while black */
     }
+    #blackout.hidden { display: none; }
+    #blackout.show { display: flex; }
 
-    /* small helper utk mobile */
+    /* small helper for mobile */
     @media (max-width: 480px) {
-      .watermark span { font-size: 20px; }
+      .loading { font-size: 13px; }
     }
   </style>
 </head>
 <body>
-  <!-- Video overlay (anti-capture). Sumber contoh; ganti jika perlu. -->
-  <video id="anti-capture-video" autoplay loop muted playsinline>
-    <!-- public tiny silent black-ish webm; sebaiknya host sendiri untuk production -->
-    <source src="https://cdn.jsdelivr.net/gh/napthedev/assets/black.webm" type="video/webm" />
-    <!-- fallback: empty -->
-  </video>
-
-  <!-- Watermark bergerak -->
-  <div class="watermark" aria-hidden="true"><span>DOKUMEN RAHASIA - DILARANG SCREENSHOT</span></div>
-
-  <!-- Notice overlay saat deteksi printscreen / kehilangan fokus -->
-  <div id="notice-overlay">🚫 Aksi screenshot tidak diizinkan</div>
+  <!-- BLACKOUT overlay yang menutupi seluruh layar saat dipicu -->
+  <div id="blackout" class="hidden" aria-hidden="true"> </div>
 
   <div id="pdf-container"></div>
   <div id="loading" class="loading">Memuat halaman...</div>
 
   <script>
-    // --- SETTINGS: ganti nama file jika perlu ---
+    // --- CONFIG: ganti nama file PDF sesuai lokasi/host mu ---
     const pdfPath = "PMA Nomor 13 Tahun 2021 - Penyelenggaraan Ibadah Haji Reguler.pdf";
 
-    // set worker
+    // pdf.js worker
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
     const container = document.getElementById("pdf-container");
     const loadingDiv = document.getElementById("loading");
-    const noticeOverlay = document.getElementById("notice-overlay");
-    const antiVideo = document.getElementById("anti-capture-video");
+    const blackout = document.getElementById("blackout");
 
     let pdfDoc = null;
     let currentPage = 1;
-    const batchSize = 2; // muat 2 halaman per scroll agar ringan
+    const batchSize = 2; // muat 2 halaman per scroll
+    const blackoutDurationMs = 5000; // 5 detik
 
-    // --- fetch sebagai ArrayBuffer untuk mengurangi eksposur URL langsung ---
+    // fetch PDF sebagai arrayBuffer -> membuat URL langsung kurang terekspos
     async function loadPdfData(path) {
       try {
-        // Jika file disajikan dari server yang memerlukan auth, gunakan fetch dengan header/credentials sesuai kebutuhan
         const res = await fetch(path, { method: "GET", cache: "no-store" });
         if (!res.ok) throw new Error("Gagal mengambil PDF: " + res.status);
         const ab = await res.arrayBuffer();
@@ -164,20 +108,14 @@
     function renderPage(pageNum) {
       return pdfDoc.getPage(pageNum).then(page => {
         const baseViewport = page.getViewport({ scale: 1 });
-
-        // lebar layar maksimal 800px
         const desiredWidth = Math.min(window.innerWidth * 0.95, 800);
-
-        // tambah faktor kualitas (agar tidak blur)
         const qualityFactor = window.devicePixelRatio || 2;
-
         const scale = (desiredWidth * qualityFactor) / baseViewport.width;
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
 
-        // mencegah drag & kanan di canvas
         canvas.setAttribute("draggable", "false");
         canvas.oncontextmenu = e => e.preventDefault();
 
@@ -187,7 +125,6 @@
         canvas.style.height = (viewport.height / qualityFactor) + "px";
 
         container.appendChild(canvas);
-
         return page.render({ canvasContext: ctx, viewport: viewport }).promise;
       });
     }
@@ -195,27 +132,18 @@
     async function renderBatch() {
       if (!pdfDoc) return;
       loadingDiv.style.display = "block";
-
-      let endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
-
+      const endPage = Math.min(currentPage + batchSize - 1, pdfDoc.numPages);
       for (let i = currentPage; i <= endPage; i++) {
         await renderPage(i);
       }
-
       currentPage = endPage + 1;
-
-      if (currentPage > pdfDoc.numPages) {
-        loadingDiv.textContent = "✅ Semua halaman selesai dimuat.";
-      } else {
-        loadingDiv.textContent = "⬇️ Scroll ke bawah untuk lanjut...";
-      }
+      loadingDiv.textContent = currentPage > pdfDoc.numPages ? "✅ Semua halaman selesai dimuat." : "⬇️ Scroll ke bawah untuk lanjut...";
     }
 
-    // inisialisasi: ambil PDF sebagai binary lalu beri ke pdf.js
     (async () => {
       try {
         const data = await loadPdfData(pdfPath);
-        const loadingTask = pdfjsLib.getDocument({ data }); // pass arrayBuffer, bukan url
+        const loadingTask = pdfjsLib.getDocument({ data });
         pdfDoc = await loadingTask.promise;
         renderBatch();
       } catch (err) {
@@ -226,112 +154,118 @@
     // infinite scroll
     window.addEventListener("scroll", () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
-        if (currentPage <= (pdfDoc ? pdfDoc.numPages : 0)) {
-          renderBatch();
-        }
+        if (currentPage <= (pdfDoc ? pdfDoc.numPages : 0)) renderBatch();
       }
     });
 
-    // --- event proteksi copy / paste / cut / selection / drag ---
-    document.addEventListener("copy", (e) => {
-      e.preventDefault();
-      try { navigator.clipboard && navigator.clipboard.writeText && navigator.clipboard.writeText(""); } catch(_) {}
-      showNoticeTemporary("Copy diblokir");
-    }, { passive: false });
-    document.addEventListener("cut", (e) => { e.preventDefault(); showNoticeTemporary("Cut diblokir"); }, { passive:false });
-    document.addEventListener("paste", (e) => { e.preventDefault(); showNoticeTemporary("Paste diblokir"); }, { passive:false });
-
-    // nonaktifkan context menu & teks seleksi pada seluruh dokumen
+    // --- Proteksi copy / paste / right-click / selection / drag ---
+    document.addEventListener("copy", e => { e.preventDefault(); try { navigator.clipboard && navigator.clipboard.writeText && navigator.clipboard.writeText(""); } catch(_){} });
+    document.addEventListener("cut", e => { e.preventDefault(); });
+    document.addEventListener("paste", e => { e.preventDefault(); });
     document.addEventListener("contextmenu", e => e.preventDefault());
     document.addEventListener("selectstart", e => e.preventDefault());
-
-    // nonaktifkan drag untuk elemen
     document.addEventListener("dragstart", e => e.preventDefault());
 
-    // blokir beberapa shortcut umum (save, print, view-source, devtools)
-    document.addEventListener("keydown", (e) => {
+    // blokir shortcut umum (save, print, view-source, devtools)
+    document.addEventListener("keydown", e => {
       const key = e.key ? e.key.toLowerCase() : "";
+      // Ctrl+S, Ctrl+P, Ctrl+U
       if (e.ctrlKey && ["s","p","u"].includes(key)) {
         e.preventDefault();
-        showNoticeTemporary("Aksi ini tidak diizinkan.");
+        triggerTemporaryNotice("Aksi diblokir");
       }
+      // DevTools
       if (e.key === "F12" || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "i")) {
         e.preventDefault();
-        showNoticeTemporary("Akses developer tools diblokir.");
+        triggerTemporaryNotice("Akses developer tools diblokir");
       }
-      // deteksi PrintScreen key (nama kunci berbeda-beda; gunakan `PrintScreen` string)
-      if (e.key && (e.key === "PrintScreen" || e.key === "Print" )) {
+      // deteksi shortcut screenshot umum
+      if (
+        e.key === "PrintScreen" ||
+        (e.ctrlKey && e.shiftKey && (key === "s")) || // Ctrl+Shift+S
+        (e.metaKey && e.shiftKey && (key === "s"))    // Meta(⌘)+Shift+S (Mac)
+      ) {
         e.preventDefault();
-        handlePrintScreen();
+        triggerBlackout();
       }
     }, { passive: false });
 
-    // kadang tombol PrintScreen tidak lewat keydown di browser — sediakan listener untuk keyup juga
-    document.addEventListener("keyup", (e) => {
-      if (e.key && (e.key === "PrintScreen" || e.key === "Print")) {
+    // beberapa browser/OS tidak melempar PrintScreen lewat keydown -> tangani juga keyup
+    document.addEventListener("keyup", e => {
+      if (e.key === "PrintScreen" || e.key === "Print") {
         e.preventDefault();
-        handlePrintScreen();
+        triggerBlackout();
       }
     });
 
-    // ketika jendela kehilangan fokus (mungkin user buka snipping tool) -> kaburkan
+    // jika tab kehilangan fokus (mungkin buka snipping tool), trigger blackout (best-effort)
+    let lastFocusState = document.hasFocus();
     window.addEventListener("blur", () => {
-      container.style.filter = "blur(12px)";
-      showNotice("Memeriksa aktivitas layar...");
-    });
-    window.addEventListener("focus", () => {
-      container.style.filter = "none";
-      hideNotice();
-    });
-
-    // fungsi bantu untuk notice sementara
-    let noticeTimer = null;
-    function showNoticeTemporary(text = "Aksi diblokir", ms = 1800) {
-      const el = noticeOverlay;
-      el.textContent = text;
-      el.style.display = "flex";
-      if (noticeTimer) clearTimeout(noticeTimer);
-      noticeTimer = setTimeout(() => {
-        el.style.display = "none";
-      }, ms);
-    }
-    function showNotice(text = "") {
-      noticeOverlay.textContent = text || "Aksi tidak diizinkan";
-      noticeOverlay.style.display = "flex";
-    }
-    function hideNotice() {
-      noticeOverlay.style.display = "none";
-    }
-
-    // handle PrintScreen: coba kosongkan clipboard (aman jika dijalankan lewat https/secure context)
-    async function handlePrintScreen() {
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText("");
-        }
-      } catch (err) {
-        // ignore (clipboard API mungkin tidak tersedia)
+      // hanya trigger bila sebelumnya fokus (hindari trigger berulang yg mengganggu)
+      if (document.hasFocus() === false && lastFocusState === true) {
+        triggerBlackout();
       }
-      // tampilkan overlay singkat
-      showNoticeTemporary("Screenshot diblokir");
-      // kecilkan opacity video sementara kalau perlu (opsional, tapi biar lebih kuat)
-      antiVideo.style.opacity = "0.02";
-      setTimeout(() => { antiVideo.style.opacity = "0.01"; }, 1400);
-    }
+      lastFocusState = false;
+    });
+    window.addEventListener("focus", () => { lastFocusState = true; });
 
-    // tambahan: deteksi visibilitychange (jika tab disembunyikan / dipindah)
+    // juga deteksi perubahan visibility (mis. pindah tab)
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
-        container.style.filter = "blur(12px)";
-        showNotice("Tab tidak terlihat — konten disembunyikan");
-      } else {
-        container.style.filter = "none";
-        hideNotice();
+        triggerBlackout();
       }
     });
 
-    // small safety: prevent right-clicks on dynamically appended canvases as well
-    new MutationObserver((mutations) => {
+    // fungsi blackout: tampilkan overlay hitam full-screen selama blackoutDurationMs
+    let blackoutTimer = null;
+    function triggerBlackout() {
+      if (blackoutTimer) return; // jika sudah sedang blackout, jangan ulang
+      // tampilkan overlay hitam
+      blackout.classList.remove("hidden");
+      blackout.classList.add("show");
+      // disable scroll sementara agar tidak mengacaukan layout
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+
+      // coba kosongkan clipboard untuk mengurangi kemungkinan PrintScreen ke clipboard (jika API tersedia)
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText("");
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      blackoutTimer = setTimeout(() => {
+        blackout.classList.remove("show");
+        blackout.classList.add("hidden");
+        document.documentElement.style.overflow = "";
+        document.body.style.overflow = "";
+        clearTimeout(blackoutTimer);
+        blackoutTimer = null;
+      }, blackoutDurationMs);
+    }
+
+    // small temporary notice (re-use blackout text area for message if needed)
+    function triggerTemporaryNotice(msg = "Aksi diblokir", ms = 1200) {
+      const prev = blackout.classList.contains("show");
+      // show a transient message using blackout overlay but semi-transparent
+      blackout.style.background = "rgba(0,0,0,0.85)";
+      blackout.textContent = msg;
+      blackout.classList.remove("hidden");
+      blackout.classList.add("show");
+      setTimeout(() => {
+        blackout.textContent = "";
+        blackout.style.background = "#000";
+        if (!prev && blackoutTimer === null) {
+          blackout.classList.remove("show");
+          blackout.classList.add("hidden");
+        }
+      }, ms);
+    }
+
+    // pastikan canvases yg ditambahkan juga tidak mengizinkan context menu atau selection
+    new MutationObserver(mutations => {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType === 1 && node.tagName === "CANVAS") {
@@ -344,8 +278,7 @@
       }
     }).observe(container, { childList: true });
 
-    // Note: browser limitations remain. Untuk proteksi full pada device: gunakan Android WebView FLAG_SECURE, Electron setContentProtection, atau native app.
-
+    // catatan: browser limitations tetap ada. Untuk proteksi penuh pada device, gunakan native app (Android FLAG_SECURE, Electron setContentProtection, dll).
   </script>
 </body>
 </html>
